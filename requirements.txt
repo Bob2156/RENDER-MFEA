@@ -1,3 +1,5 @@
 Flask
 PyNaCl
 requests
+yfinance
+beautifulsoup4
