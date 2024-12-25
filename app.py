@@ -1,8 +1,12 @@
+import os
+import logging
+import requests
+from flask import Flask, request, jsonify
+from nacl.signing import VerifyKey
+from nacl.exceptions import BadSignatureError
 import threading
 import yfinance as yf
 from bs4 import BeautifulSoup
-import discord
-from discord.ext import commands
 
 # Logging setup
 logging.basicConfig(
@@ -139,6 +143,7 @@ def fetch_and_respond_check(interaction_token, user_id):
                 }
             ]
         }
+
         # Determine strategy
         if last_close > sma_220:
             if volatility < 14:
@@ -155,7 +160,9 @@ def fetch_and_respond_check(interaction_token, user_id):
                 strategy = "Risk ALT - 25% UPRO + 75% ZROZ or 1.5x (50% SPY + 50% ZROZ)"
             else:
                 strategy = "Risk OFF - 100% SPY or 1x (100% SPY)"
+
         embed["embeds"][0]["fields"].append({"name": "Investment Strategy", "value": strategy, "inline": False})
+
         send_followup_response(interaction_token, embed)
     except Exception as e:
         logging.error(f"Error in /check: {e}")
