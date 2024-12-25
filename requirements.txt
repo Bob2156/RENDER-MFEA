@@ -1,3 +1,5 @@
 Flask
-PyNaCl
+discord.py
+yfinance
 requests
+beautifulsoup4
