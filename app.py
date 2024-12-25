@@ -33,7 +33,7 @@ def verify_signature(req):
     except BadSignatureError:
         raise ValueError("Invalid request signature")
 
-# Background worker to send delayed responses
+# Background worker to send responses
 def send_followup_response(interaction_token, payload):
     url = f"https://discord.com/api/v10/webhooks/{os.getenv('DISCORD_APP_ID')}/{interaction_token}"
     headers = {
@@ -84,6 +84,60 @@ def fetch_treasury_rate():
     except Exception as e:
         raise ValueError(f"Error fetching treasury rate: {e}")
 
+# Automatically send /check results at startup
+def send_startup_check():
+    try:
+        last_close, sma_220, volatility = fetch_sma_and_volatility()
+        treasury_rate = fetch_treasury_rate()
+
+        embed = {
+            "embeds": [
+                {
+                    "title": "Market Financial Evaluation Assistant (MFEA)",
+                    "description": "Here is the latest market data:",
+                    "fields": [
+                        {"name": "SPX Last Close", "value": f"{last_close}", "inline": True},
+                        {"name": "SMA 220", "value": f"{sma_220}", "inline": True},
+                        {"name": "Volatility (Annualized)", "value": f"{volatility}%", "inline": True},
+                        {"name": "3M Treasury Rate", "value": f"{treasury_rate}%", "inline": True}
+                    ],
+                    "color": 5814783
+                }
+            ]
+        }
+
+        # Determine strategy
+        if last_close > sma_220:
+            if volatility < 14:
+                strategy = "Risk ON - 100% UPRO or 3x (100% SPY)"
+            elif volatility < 24:
+                strategy = "Risk MID - 100% SSO or 2x (100% SPY)"
+            else:
+                if treasury_rate and treasury_rate < 4:
+                    strategy = "Risk ALT - 25% UPRO + 75% ZROZ or 1.5x (50% SPY + 50% ZROZ)"
+                else:
+                    strategy = "Risk OFF - 100% SPY or 1x (100% SPY)"
+        else:
+            if treasury_rate and treasury_rate < 4:
+                strategy = "Risk ALT - 25% UPRO + 75% ZROZ or 1.5x (50% SPY + 50% ZROZ)"
+            else:
+                strategy = "Risk OFF - 100% SPY or 1x (100% SPY)"
+
+        embed["embeds"][0]["fields"].append({"name": "Investment Strategy", "value": strategy, "inline": False})
+
+        webhook_url = f"https://discord.com/api/v10/webhooks/{os.getenv('DISCORD_APP_ID')}/{os.getenv('DISCORD_WEBHOOK_TOKEN')}"
+        headers = {"Content-Type": "application/json"}
+
+        response = requests.post(webhook_url, json=embed, headers=headers)
+
+        if response.status_code == 200:
+            logging.info("Successfully sent startup /check results.")
+        else:
+            logging.error(f"Failed to send startup /check results: {response.status_code} {response.text}")
+
+    except Exception as e:
+        logging.error(f"Error during startup /check: {e}")
+
 # Route to handle Discord interactions
 @app.route("/", methods=["POST"])
 def handle_interaction():
@@ -123,7 +177,7 @@ def handle_interaction():
     return jsonify({"error": "Unknown command"}), 400
 
 # Fetch market data and send response for /check
-def fetch_and_respond_check(interaction_token, user_id="self"):  # Default user_id for auto-run
+def fetch_and_respond_check(interaction_token, user_id):
     try:
         last_close, sma_220, volatility = fetch_sma_and_volatility()
         treasury_rate = fetch_treasury_rate()
@@ -173,13 +227,8 @@ def fetch_and_respond_check(interaction_token, user_id="self"):  # Default user_
 def health_check():
     return "OK", 200
 
-# Run /check automatically at startup
-def auto_run_check():
-    interaction_token = "startup_token"
-    fetch_and_respond_check(interaction_token)
-
 # Start Flask server
 if __name__ == "__main__":
-    threading.Thread(target=auto_run_check).start()  # Run the /check command in a separate thread
+    threading.Thread(target=send_startup_check).start()
     port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
