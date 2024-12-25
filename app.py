@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 import discord
 from discord.ext import commands
 import asyncio
+import threading
 
 # Logging setup
 logging.basicConfig(
