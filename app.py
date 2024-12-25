@@ -7,6 +7,8 @@ from nacl.exceptions import BadSignatureError
 import threading
 import yfinance as yf
 from bs4 import BeautifulSoup
+import discord
+from discord.ext import commands
 
 # Logging setup
 logging.basicConfig(
@@ -17,6 +19,11 @@ logging.basicConfig(
 
 # Initialize Flask app
 app = Flask(__name__)
+
+# Discord client setup
+intents = discord.Intents.default()
+intents.messages = True
+client = commands.Bot(command_prefix="!", intents=intents)
 
 # Function to verify Discord's signature
 def verify_signature(req):
@@ -85,28 +92,29 @@ def fetch_treasury_rate():
         raise ValueError(f"Error fetching treasury rate: {e}")
 
 # Function to send a startup message to Discord
-def send_startup_message():
+async def send_startup_message():
     try:
         bot_token = os.getenv("DISCORD_BOT_TOKEN")
-        channel_id = os.getenv("DISCORD_CHANNEL_ID")  # Channel ID to send the message
+        channel_id = int(os.getenv("DISCORD_CHANNEL_ID"))  # Channel ID to send the message
         if not bot_token or not channel_id:
             logging.error("Bot token or channel ID is not set in environment variables.")
             return
 
-        url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
-        headers = {
-            "Authorization": f"Bot {bot_token}",
-            "Content-Type": "application/json"
-        }
-        payload = {"content": "Bot is online"}
+        await client.login(bot_token)
+        channel = await client.fetch_channel(channel_id)
+        messages = await channel.history(limit=1).flatten()
 
-        response = requests.post(url, json=payload, headers=headers)
-        if response.status_code == 200:
-            logging.info("Startup message sent successfully.")
+        if messages:
+            last_user = messages[0].author.mention
+            await channel.send(f"{last_user}, bot is online now!")
         else:
-            logging.error(f"Failed to send startup message: {response.status_code} {response.text}")
+            await channel.send("Bot is online now!")
+
+        logging.info("Startup message sent successfully.")
+        await client.close()
     except Exception as e:
         logging.error(f"Error sending startup message: {e}")
+        await client.close()
 
 # Route to handle Discord interactions
 @app.route("/", methods=["POST"])
@@ -200,7 +208,7 @@ def health_check():
 # Start Flask server
 if __name__ == "__main__":
     # Send startup message
-    threading.Thread(target=send_startup_message).start()
+    threading.Thread(target=lambda: client.loop.run_until_complete(send_startup_message())).start()
 
     # Start Flask app
     port = int(os.getenv("PORT", 8080))
