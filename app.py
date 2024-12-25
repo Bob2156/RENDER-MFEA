@@ -34,12 +34,12 @@ def verify_signature(req):
         raise ValueError("Invalid request signature")
 
 # Background worker to send delayed responses
-def send_followup_response(interaction_token, content):
+def send_followup_response(interaction_token, payload):
     url = f"https://discord.com/api/v10/webhooks/{os.getenv('DISCORD_APP_ID')}/{interaction_token}"
     headers = {
         "Content-Type": "application/json",
     }
-    response = requests.post(url, json={"content": content}, headers=headers)
+    response = requests.post(url, json=payload, headers=headers)
     if response.status_code == 200:
         logging.info("Successfully sent follow-up response.")
     else:
@@ -107,37 +107,46 @@ def handle_interaction():
     if data.get("type") == 2:
         command_name = data["data"]["name"]
         interaction_token = data["token"]
+        user_id = data["member"]["user"]["id"]  # Extract user ID for ping
 
         # Handle /ping command
         if command_name == "ping":
-            threading.Thread(target=send_followup_response, args=(interaction_token, "The bot is awake and ready!")).start()
+            threading.Thread(target=send_followup_response, args=(interaction_token, {"content": "The bot is awake and ready!"})).start()
             return jsonify({"type": 5})  # Acknowledge the command
 
         # Handle /check command
         elif command_name == "check":
-            threading.Thread(target=fetch_and_respond_check, args=(interaction_token,)).start()
+            threading.Thread(target=fetch_and_respond_check, args=(interaction_token, user_id)).start()
             return jsonify({"type": 5})  # Acknowledge the command
 
     # Default response for unknown commands
     return jsonify({"error": "Unknown command"}), 400
 
 # Fetch market data and send response for /check
-def fetch_and_respond_check(interaction_token):
+def fetch_and_respond_check(interaction_token, user_id):
     try:
         last_close, sma_220, volatility = fetch_sma_and_volatility()
         treasury_rate = fetch_treasury_rate()
 
-        content = (
-            f"**Market Financial Evaluation Assistant (MFEA)**\n"
-            f"SPX Last Close: {last_close}\n"
-            f"SMA 220: {sma_220}\n"
-            f"Volatility (Annualized): {volatility}%\n"
-            f"3M Treasury Rate: {treasury_rate}%\n"
-        )
-        send_followup_response(interaction_token, content)
+        embed = {
+            "embeds": [
+                {
+                    "title": "Market Financial Evaluation Assistant (MFEA)",
+                    "description": f"<@{user_id}>, here is the latest market data:",
+                    "fields": [
+                        {"name": "SPX Last Close", "value": f"{last_close}", "inline": True},
+                        {"name": "SMA 220", "value": f"{sma_220}", "inline": True},
+                        {"name": "Volatility (Annualized)", "value": f"{volatility}%", "inline": True},
+                        {"name": "3M Treasury Rate", "value": f"{treasury_rate}%", "inline": True}
+                    ],
+                    "color": 5814783
+                }
+            ]
+        }
+        send_followup_response(interaction_token, embed)
     except Exception as e:
         logging.error(f"Error in /check: {e}")
-        send_followup_response(interaction_token, f"An error occurred: {e}")
+        send_followup_response(interaction_token, {"content": f"<@{user_id}>, an error occurred: {e}"})
 
 # Flask health check endpoint
 @app.route("/healthz", methods=["GET", "HEAD"])
