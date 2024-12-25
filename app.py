@@ -123,7 +123,7 @@ def handle_interaction():
     return jsonify({"error": "Unknown command"}), 400
 
 # Fetch market data and send response for /check
-def fetch_and_respond_check(interaction_token, user_id):
+def fetch_and_respond_check(interaction_token, user_id="self"):  # Default user_id for auto-run
     try:
         last_close, sma_220, volatility = fetch_sma_and_volatility()
         treasury_rate = fetch_treasury_rate()
@@ -173,7 +173,13 @@ def fetch_and_respond_check(interaction_token, user_id):
 def health_check():
     return "OK", 200
 
+# Run /check automatically at startup
+def auto_run_check():
+    interaction_token = "startup_token"
+    fetch_and_respond_check(interaction_token)
+
 # Start Flask server
 if __name__ == "__main__":
+    threading.Thread(target=auto_run_check).start()  # Run the /check command in a separate thread
     port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
