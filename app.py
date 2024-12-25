@@ -4,6 +4,7 @@ from flask import Flask, request, jsonify, abort
 import nacl.signing
 import nacl.exceptions
 import threading
+import requests
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -36,9 +37,11 @@ def verify_signature(req):
 
 # Background worker to send delayed responses
 def send_followup_response(interaction_token, content):
-    import requests
-    url = f"https://discord.com/api/v10/webhooks/{os.getenv('DISCORD_APP_ID')}/{interaction_token}"
-    response = requests.post(url, json={"content": content})
+    url = f"https://discord.com/api/v10/webhooks/{os.getenv('DISCORD_APP_ID')}/{interaction_token}"  # Correct webhook URL
+    headers = {
+        "Content-Type": "application/json",
+    }
+    response = requests.post(url, json={"content": content}, headers=headers)
     if response.status_code == 200:
         logging.info("Successfully sent follow-up response.")
     else:
