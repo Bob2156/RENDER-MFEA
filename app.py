@@ -1,31 +1,34 @@
 import discord
-from discord.ext import commands
+from discord import app_commands
 import yfinance as yf
 import requests
 from bs4 import BeautifulSoup
 import os
 from flask import Flask
 import threading
-import time
 import logging
 
 # Logging setup
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
 
 # Discord bot setup
 intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
 
-@bot.event
-async def on_ready():
-    logging.info(f"Logged in as {bot.user}")
+class MyBot(discord.Client):
+    def __init__(self):
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+
+    async def on_ready(self):
+        logging.info(f"Logged in as {self.user}")
+        await self.tree.sync()  # Sync slash commands
+        logging.info("Slash commands synced.")
+
+bot = MyBot()
 
 # Helper function to fetch SMA and volatility
 def fetch_sma_and_volatility():
@@ -66,10 +69,10 @@ def fetch_treasury_rate():
     except Exception as e:
         raise ValueError(f"Error fetching treasury rate: {e}")
 
-# !check Command
-@bot.command()
-async def check(ctx):
-    await ctx.send("Fetching data... Please wait.")
+# /check Command
+@bot.tree.command(name="check", description="Fetches market data and provides recommendations.")
+async def check(interaction: discord.Interaction):
+    await interaction.response.defer()  # Acknowledge the command to prevent timeout
     try:
         last_close, sma_220, volatility = fetch_sma_and_volatility()
         treasury_rate = fetch_treasury_rate()
@@ -100,13 +103,26 @@ async def check(ctx):
             )
 
         embed.add_field(name="MFEA Recommendation", value=recommendation, inline=False)
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
     except ValueError as e:
-        await ctx.send(f"Error: {e}")
+        await interaction.followup.send(f"Error: {e}")
     except Exception as e:
-        await ctx.send(f"Unexpected error: {e}")
+        await interaction.followup.send(f"Unexpected error: {e}")
 
-# Flask setup for health checks and wake-up pings
+# /ping Command
+@bot.tree.command(name="ping", description="Sends an HTTP request to wake up the bot.")
+async def ping(interaction: discord.Interaction):
+    url = f"https://{os.getenv('RENDER_APP_URL')}/healthz"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            await interaction.response.send_message("The bot is awake and ready!", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"Unexpected response from wake-up ping: {response.status_code}", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"Error sending wake-up ping: {e}", ephemeral=True)
+
+# Flask setup for health checks
 app = Flask(__name__)
 
 @app.route("/")
@@ -116,19 +132,6 @@ def home():
 @app.route("/healthz", methods=["GET", "HEAD"])
 def health_check():
     return "OK", 200
-
-# /ping Command for Discord to send HTTP requests
-@bot.command()
-async def ping(ctx):
-    url = f"https://{os.getenv('RENDER_APP_URL')}/healthz"
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            await ctx.send("The bot is awake and ready!")
-        else:
-            await ctx.send(f"Unexpected response from wake-up ping: {response.status_code}")
-    except Exception as e:
-        await ctx.send(f"Error sending wake-up ping: {e}")
 
 # Run Flask server in a separate thread
 def run_flask():
