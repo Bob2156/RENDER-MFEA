@@ -33,7 +33,7 @@ def verify_signature(req):
     except BadSignatureError:
         raise ValueError("Invalid request signature")
 
-# Background worker to send responses
+# Background worker to send delayed responses
 def send_followup_response(interaction_token, payload):
     url = f"https://discord.com/api/v10/webhooks/{os.getenv('DISCORD_APP_ID')}/{interaction_token}"
     headers = {
@@ -84,59 +84,29 @@ def fetch_treasury_rate():
     except Exception as e:
         raise ValueError(f"Error fetching treasury rate: {e}")
 
-# Automatically send /check results at startup
-def send_startup_check():
+# Function to send a startup message to Discord
+def send_startup_message():
     try:
-        last_close, sma_220, volatility = fetch_sma_and_volatility()
-        treasury_rate = fetch_treasury_rate()
+        bot_token = os.getenv("DISCORD_BOT_TOKEN")
+        channel_id = os.getenv("DISCORD_CHANNEL_ID")  # Channel ID to send the message
+        if not bot_token or not channel_id:
+            logging.error("Bot token or channel ID is not set in environment variables.")
+            return
 
-        embed = {
-            "embeds": [
-                {
-                    "title": "Market Financial Evaluation Assistant (MFEA)",
-                    "description": "Here is the latest market data:",
-                    "fields": [
-                        {"name": "SPX Last Close", "value": f"{last_close}", "inline": True},
-                        {"name": "SMA 220", "value": f"{sma_220}", "inline": True},
-                        {"name": "Volatility (Annualized)", "value": f"{volatility}%", "inline": True},
-                        {"name": "3M Treasury Rate", "value": f"{treasury_rate}%", "inline": True}
-                    ],
-                    "color": 5814783
-                }
-            ]
+        url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+        headers = {
+            "Authorization": f"Bot {bot_token}",
+            "Content-Type": "application/json"
         }
+        payload = {"content": "Bot is online"}
 
-        # Determine strategy
-        if last_close > sma_220:
-            if volatility < 14:
-                strategy = "Risk ON - 100% UPRO or 3x (100% SPY)"
-            elif volatility < 24:
-                strategy = "Risk MID - 100% SSO or 2x (100% SPY)"
-            else:
-                if treasury_rate and treasury_rate < 4:
-                    strategy = "Risk ALT - 25% UPRO + 75% ZROZ or 1.5x (50% SPY + 50% ZROZ)"
-                else:
-                    strategy = "Risk OFF - 100% SPY or 1x (100% SPY)"
-        else:
-            if treasury_rate and treasury_rate < 4:
-                strategy = "Risk ALT - 25% UPRO + 75% ZROZ or 1.5x (50% SPY + 50% ZROZ)"
-            else:
-                strategy = "Risk OFF - 100% SPY or 1x (100% SPY)"
-
-        embed["embeds"][0]["fields"].append({"name": "Investment Strategy", "value": strategy, "inline": False})
-
-        webhook_url = f"https://discord.com/api/v10/webhooks/{os.getenv('DISCORD_APP_ID')}/{os.getenv('DISCORD_WEBHOOK_TOKEN')}"
-        headers = {"Content-Type": "application/json"}
-
-        response = requests.post(webhook_url, json=embed, headers=headers)
-
+        response = requests.post(url, json=payload, headers=headers)
         if response.status_code == 200:
-            logging.info("Successfully sent startup /check results.")
+            logging.info("Startup message sent successfully.")
         else:
-            logging.error(f"Failed to send startup /check results: {response.status_code} {response.text}")
-
+            logging.error(f"Failed to send startup message: {response.status_code} {response.text}")
     except Exception as e:
-        logging.error(f"Error during startup /check: {e}")
+        logging.error(f"Error sending startup message: {e}")
 
 # Route to handle Discord interactions
 @app.route("/", methods=["POST"])
@@ -229,6 +199,9 @@ def health_check():
 
 # Start Flask server
 if __name__ == "__main__":
-    threading.Thread(target=send_startup_check).start()
+    # Send startup message
+    threading.Thread(target=send_startup_message).start()
+
+    # Start Flask app
     port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
