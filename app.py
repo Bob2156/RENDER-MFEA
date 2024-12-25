@@ -102,7 +102,9 @@ async def send_startup_message():
 
         await client.login(bot_token)
         channel = await client.fetch_channel(channel_id)
-        messages = await channel.history(limit=1).flatten()
+        messages = []
+        async for message in channel.history(limit=1):
+            messages.append(message)
 
         if messages:
             last_user = messages[0].author.mention
