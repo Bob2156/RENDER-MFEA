@@ -1,30 +1,76 @@
-from flask import Flask, request, jsonify
 import os
+import logging
+from flask import Flask, request, jsonify, abort
+import nacl.signing
+import nacl.exceptions
 
+# Initialize Flask app
 app = Flask(__name__)
 
-# Discord Bot Token and Public Key
+# Load environment variables
 DISCORD_PUBLIC_KEY = os.getenv("DISCORD_PUBLIC_KEY")
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+if not DISCORD_PUBLIC_KEY:
+    raise ValueError("DISCORD_PUBLIC_KEY is not set in environment variables.")
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
+# Function to verify request signature from Discord
+def verify_signature(req):
+    signature = req.headers.get("X-Signature-Ed25519")
+    timestamp = req.headers.get("X-Signature-Timestamp")
+    body = req.get_data(as_text=True)
+
+    if not signature or not timestamp:
+        logging.error("Missing signature or timestamp in headers.")
+        abort(401, "Missing signature or timestamp")
+
+    try:
+        verify_key = nacl.signing.VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY))
+        verify_key.verify(f"{timestamp}{body}".encode(), bytes.fromhex(signature))
+    except nacl.exceptions.BadSignatureError:
+        logging.error("Invalid request signature.")
+        abort(401, "Invalid request signature")
+
+# Route to handle Discord interactions
 @app.route("/", methods=["POST"])
 def handle_interaction():
-    # Handle the interaction from Discord
-    data = request.json
+    # Verify the incoming request
+    verify_signature(request)
 
-    # Respond to the `/check` command
-    if data.get("type") == 2:  # Interaction type 2 = ApplicationCommand
-        if data["data"]["name"] == "check":
+    # Parse the JSON payload
+    try:
+        data = request.json
+        logging.info(f"Received interaction: {data}")
+    except Exception as e:
+        logging.error(f"Failed to parse JSON payload: {e}")
+        abort(400, "Invalid JSON payload")
+
+    # Handle PING (Discord's interaction endpoint validation)
+    if data.get("type") == 1:
+        logging.info("Responding to PING.")
+        return jsonify({"type": 1})
+
+    # Handle slash commands
+    if data.get("type") == 2:
+        command_name = data["data"]["name"]
+        logging.info(f"Command received: {command_name}")
+
+        if command_name == "check":
             return jsonify({
-                "type": 4,  # Response type 4 = Channel Message With Source
+                "type": 4,  # Respond with a message visible to the user
                 "data": {
                     "content": "working"
                 }
             })
 
-    return jsonify({"type": 1})  # Default acknowledgment
+    # Default fallback
+    logging.warning("Unhandled interaction type.")
+    return jsonify({"type": 1})
 
-
+# Main entry point
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    # Ensure PORT is set for Render
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
