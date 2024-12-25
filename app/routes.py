@@ -6,6 +6,9 @@ routes = Blueprint("routes", __name__)
 
 @routes.route("/", methods=["POST"])
 def interaction_handler():
+    """
+    Main route to handle Discord interactions.
+    """
     try:
         verify_signature(request)
     except ValueError as e:
