@@ -5,7 +5,6 @@ import requests
 
 # Initialize Flask app
 app = Flask(__name__)
-@@ -36,30 +37,32 @@
 
 # Background worker to send delayed responses
 def send_followup_response(interaction_token, content):
