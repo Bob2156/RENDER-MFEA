@@ -1,98 +1,96 @@
-import discord
-from discord import app_commands
-import yfinance as yf
-import requests
-from bs4 import BeautifulSoup
 import os
-from flask import Flask
-import threading
 import logging
+from flask import Flask, request, jsonify, abort
+import nacl.signing
+import nacl.exceptions
+import threading
+import requests
 
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()]
-)
-
-# Discord bot setup
-intents = discord.Intents.default()
-
-class MyBot(discord.Client):
-    def __init__(self):
-        super().__init__(intents=intents)
-        self.tree = app_commands.CommandTree(self)
-
-    async def on_ready(self):
-        logging.info(f"Logged in as {self.user}")
-        await self.tree.sync()  # Sync slash commands
-        logging.info("Slash commands synced.")
-
-bot = MyBot()
-
-# /check Command
-@bot.tree.command(name="check", description="Fetches market data and provides recommendations.")
-async def check(interaction: discord.Interaction):
-    await interaction.response.defer()  # Acknowledge the command
-    try:
-        # Fetch financial data
-        ticker = yf.Ticker("^GSPC")
-        data = ticker.history(period="1y")
-        sma_220 = round(data['Close'].rolling(window=220).mean().iloc[-1], 2)
-        last_close = round(data['Close'].iloc[-1], 2)
-
-        # Fetch 3-month Treasury rate
-        URL = "https://www.cnbc.com/quotes/US3M"
-        response = requests.get(URL)
-        soup = BeautifulSoup(response.text, "html.parser")
-        rate_element = soup.find("span", {"class": "QuoteStrip-lastPrice"})
-        treasury_rate = float(rate_element.text.strip().replace('%', ''))
-
-        # Create response embed
-        embed = discord.Embed(title="Market Financial Evaluation", color=discord.Color.blue())
-        embed.add_field(name="SPX Last Close", value=f"{last_close}")
-        embed.add_field(name="SMA 220", value=f"{sma_220}")
-        embed.add_field(name="3M Treasury Rate", value=f"{treasury_rate}%")
-        embed.add_field(name="Recommendation", value="Check market trends for your strategy.")
-
-        await interaction.followup.send(embed=embed)
-    except Exception as e:
-        await interaction.followup.send(f"An error occurred: {e}")
-
-# /ping Command
-@bot.tree.command(name="ping", description="Sends an HTTP request to wake up the bot.")
-async def ping(interaction: discord.Interaction):
-    url = f"https://{os.getenv('RENDER_APP_URL')}/healthz"
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            await interaction.response.send_message("The bot is awake and ready!", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"Unexpected response from wake-up ping: {response.status_code}", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"Error sending wake-up ping: {e}", ephemeral=True)
-
-# Flask setup for health checks
+# Initialize Flask app
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "The bot is running!"
+# Load environment variables
+DISCORD_PUBLIC_KEY = os.getenv("DISCORD_PUBLIC_KEY")
+DISCORD_APP_ID = os.getenv("DISCORD_APP_ID")
+if not DISCORD_PUBLIC_KEY or not DISCORD_APP_ID:
+    raise ValueError("DISCORD_PUBLIC_KEY or DISCORD_APP_ID is not set in environment variables.")
 
-@app.route("/healthz", methods=["GET", "HEAD"])
-def health_check():
-    return "OK", 200
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
-# Run Flask server in a separate thread
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+# Function to verify request signature from Discord
+def verify_signature(req):
+    signature = req.headers.get("X-Signature-Ed25519")
+    timestamp = req.headers.get("X-Signature-Timestamp")
+    body = req.get_data(as_text=True)
 
+    if not signature or not timestamp:
+        logging.error("Missing signature or timestamp in headers.")
+        abort(401, "Missing signature or timestamp")
+
+    try:
+        verify_key = nacl.signing.VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY))
+        verify_key.verify(f"{timestamp}{body}".encode(), bytes.fromhex(signature))
+    except nacl.exceptions.BadSignatureError:
+        logging.error("Invalid request signature.")
+        abort(401, "Invalid request signature")
+
+
+# Background worker to send delayed responses
+def send_followup_response(interaction_token, content):
+    # Construct the webhook URL
+    url = f"https://discord.com/api/v10/webhooks/{DISCORD_APP_ID}/{interaction_token}"
+    logging.info(f"Webhook URL: {url}")  # Log the webhook URL for debugging
+
+    headers = {
+        "Content-Type": "application/json",
+    }
+
+    # Send the follow-up message
+    response = requests.post(url, json={"content": content}, headers=headers)
+    if response.status_code == 200:
+        logging.info("Successfully sent follow-up response.")
+    else:
+        logging.error(f"Failed to send follow-up response: {response.status_code} {response.text}")
+
+
+# Route to handle Discord interactions
+@app.route("/", methods=["POST"])
+def handle_interaction():
+    # Verify the request
+    verify_signature(request)
+
+    # Parse the JSON payload
+    data = request.json
+    logging.info(f"Received interaction: {data}")
+
+    # Handle PING (Discord's interaction endpoint validation)
+    if data.get("type") == 1:
+        logging.info("Responding to PING.")
+        return jsonify({"type": 1})
+
+    # Handle slash commands
+    if data.get("type") == 2:
+        command_name = data["data"]["name"]
+        interaction_token = data["token"]  # For follow-up responses
+        logging.info(f"Command received: {command_name}")
+        logging.info(f"Interaction token: {interaction_token}")  # Log interaction token
+
+        if command_name == "check":
+            # Send a deferred response immediately
+            logging.info("Acknowledging the /check command.")
+            threading.Thread(target=send_followup_response, args=(interaction_token, "working")).start()
+            return jsonify({
+                "type": 5  # Acknowledge the command and defer the response
+            })
+
+    # Default fallback
+    logging.warning("Unhandled interaction type.")
+    return jsonify({"type": 1})
+
+
+# Main entry point
 if __name__ == "__main__":
-    # Start Flask server
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-
-    # Start Discord bot
-    bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+    # Ensure PORT is set for Render
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
