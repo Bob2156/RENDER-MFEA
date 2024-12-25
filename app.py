@@ -7,6 +7,8 @@ from nacl.exceptions import BadSignatureError
 import threading
 import yfinance as yf
 from bs4 import BeautifulSoup
+import discord
+from discord.ext import commands
 
 # Logging setup
 logging.basicConfig(
@@ -143,6 +145,26 @@ def fetch_and_respond_check(interaction_token, user_id):
                 }
             ]
         }
+
+        # Determine strategy
+        if last_close > sma_220:
+            if volatility < 14:
+                strategy = "Risk ON - 100% UPRO or 3x (100% SPY)"
+            elif volatility < 24:
+                strategy = "Risk MID - 100% SSO or 2x (100% SPY)"
+            else:
+                if treasury_rate and treasury_rate < 4:
+                    strategy = "Risk ALT - 25% UPRO + 75% ZROZ or 1.5x (50% SPY + 50% ZROZ)"
+                else:
+                    strategy = "Risk OFF - 100% SPY or 1x (100% SPY)"
+        else:
+            if treasury_rate and treasury_rate < 4:
+                strategy = "Risk ALT - 25% UPRO + 75% ZROZ or 1.5x (50% SPY + 50% ZROZ)"
+            else:
+                strategy = "Risk OFF - 100% SPY or 1x (100% SPY)"
+
+        embed["embeds"][0]["fields"].append({"name": "Investment Strategy", "value": strategy, "inline": False})
+
         send_followup_response(interaction_token, embed)
     except Exception as e:
         logging.error(f"Error in /check: {e}")
