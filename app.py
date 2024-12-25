@@ -4,11 +4,11 @@ import requests
 from flask import Flask, request, jsonify
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
-import threading
 import yfinance as yf
 from bs4 import BeautifulSoup
 import discord
 from discord.ext import commands
+import asyncio
 
 # Logging setup
 logging.basicConfig(
@@ -111,9 +111,9 @@ async def send_startup_message():
             await channel.send("Bot is online now!")
 
         logging.info("Startup message sent successfully.")
-        await client.close()
     except Exception as e:
         logging.error(f"Error sending startup message: {e}")
+    finally:
         await client.close()
 
 # Route to handle Discord interactions
@@ -208,7 +208,7 @@ def health_check():
 # Start Flask server
 if __name__ == "__main__":
     # Send startup message
-    threading.Thread(target=lambda: client.loop.run_until_complete(send_startup_message())).start()
+    asyncio.run(send_startup_message())
 
     # Start Flask app
     port = int(os.getenv("PORT", 8080))
