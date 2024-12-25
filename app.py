@@ -103,6 +103,7 @@ async def send_startup_message():
 
         await client.login(bot_token)
         channel = await client.fetch_channel(channel_id)
+
         messages = []
         async for message in channel.history(limit=1):
             messages.append(message)
@@ -113,9 +114,50 @@ async def send_startup_message():
         else:
             await channel.send("Bot is online now!")
 
-        logging.info("Startup message sent successfully.")
+        # Fetch and send market data
+        last_close, sma_220, volatility = fetch_sma_and_volatility()
+        treasury_rate = fetch_treasury_rate()
+
+        embed = {
+            "embeds": [
+                {
+                    "title": "Market Financial Evaluation Assistant (MFEA)",
+                    "description": "Here is the latest market data:",
+                    "fields": [
+                        {"name": "SPX Last Close", "value": f"{last_close}", "inline": True},
+                        {"name": "SMA 220", "value": f"{sma_220}", "inline": True},
+                        {"name": "Volatility (Annualized)", "value": f"{volatility}%", "inline": True},
+                        {"name": "3M Treasury Rate", "value": f"{treasury_rate}%", "inline": True}
+                    ],
+                    "color": 5814783
+                }
+            ]
+        }
+
+        # Determine strategy
+        if last_close > sma_220:
+            if volatility < 14:
+                strategy = "Risk ON - 100% UPRO or 3x (100% SPY)"
+            elif volatility < 24:
+                strategy = "Risk MID - 100% SSO or 2x (100% SPY)"
+            else:
+                if treasury_rate and treasury_rate < 4:
+                    strategy = "Risk ALT - 25% UPRO + 75% ZROZ or 1.5x (50% SPY + 50% ZROZ)"
+                else:
+                    strategy = "Risk OFF - 100% SPY or 1x (100% SPY)"
+        else:
+            if treasury_rate and treasury_rate < 4:
+                strategy = "Risk ALT - 25% UPRO + 75% ZROZ or 1.5x (50% SPY + 50% ZROZ)"
+            else:
+                strategy = "Risk OFF - 100% SPY or 1x (100% SPY)"
+
+        embed["embeds"][0]["fields"].append({"name": "Investment Strategy", "value": strategy, "inline": False})
+
+        await channel.send(embed=discord.Embed.from_dict(embed["embeds"][0]))
+
+        logging.info("Startup message and market data sent successfully.")
     except Exception as e:
-        logging.error(f"Error sending startup message: {e}")
+        logging.error(f"Error sending startup message or market data: {e}")
     finally:
         await client.close()
 
