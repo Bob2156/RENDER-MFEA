@@ -96,24 +96,32 @@ def fetch_treasury_rate():
 async def send_startup_message():
     try:
         bot_token = os.getenv("DISCORD_BOT_TOKEN")
-        channel_id = int(os.getenv("DISCORD_CHANNEL_ID"))  # Channel ID to send the message
-        if not bot_token or not channel_id:
-            logging.error("Bot token or channel ID is not set in environment variables.")
+        channel_ids = [
+            int(os.getenv("DISCORD_CHANNEL_ID_1")),
+            int(os.getenv("DISCORD_CHANNEL_ID_2"))
+        ]  # Two channel IDs
+        if not bot_token or not all(channel_ids):
+            logging.error("Bot token or channel IDs are not set in environment variables.")
             return
 
         await client.login(bot_token)
-        channel = await client.fetch_channel(channel_id)
+        latest_message = None
 
-        messages = []
-        async for message in channel.history(limit=10):  # Check the last 10 messages for safety
-            if message.author.id != client.user.id:  # Ensure the bot doesn't consider its own messages
-                messages.append(message)
+        for channel_id in channel_ids:
+            channel = await client.fetch_channel(channel_id)
+            async for message in channel.history(limit=10):  # Check the last 10 messages in each channel
+                if message.author.id != client.user.id and message.content.startswith("/"):
+                    if message.content.startswith("/ping") or message.content.startswith("/check"):
+                        if not latest_message or message.created_at > latest_message.created_at:
+                            latest_message = message
 
-        if messages:
-            last_user = messages[0].author.mention
-            await channel.send(f"{last_user}, bot is online now!")
+        # Determine the response based on the latest relevant message
+        if latest_message:
+            await latest_message.channel.send(f"{latest_message.author.mention}, bot is online now!")
         else:
-            await channel.send("Bot is online now!")
+            # If no relevant messages are found, send a generic message to the first channel
+            first_channel = await client.fetch_channel(channel_ids[0])
+            await first_channel.send("Bot is online now!")
 
         # Fetch and send market data
         last_close, sma_220, volatility = fetch_sma_and_volatility()
@@ -154,7 +162,8 @@ async def send_startup_message():
 
         embed["embeds"][0]["fields"].append({"name": "Investment Strategy", "value": strategy, "inline": False})
 
-        await channel.send(embed=discord.Embed.from_dict(embed["embeds"][0]))
+        first_channel = await client.fetch_channel(channel_ids[0])
+        await first_channel.send(embed=discord.Embed.from_dict(embed["embeds"][0]))
 
         logging.info("Startup message and market data sent successfully.")
     except Exception as e:
