@@ -105,8 +105,9 @@ async def send_startup_message():
         channel = await client.fetch_channel(channel_id)
 
         messages = []
-        async for message in channel.history(limit=1):
-            messages.append(message)
+        async for message in channel.history(limit=10):  # Check the last 10 messages for safety
+            if message.author.id != client.user.id:  # Ensure the bot doesn't consider its own messages
+                messages.append(message)
 
         if messages:
             last_user = messages[0].author.mention
